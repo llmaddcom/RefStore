@@ -39,6 +39,7 @@ class MinioFileService:
                 },
                 "default_bucket": "user",  # 可选，默认逻辑桶名
                 "presigned_expiry": 3600,  # 可选，预签名URL过期时间（秒）
+                "public_url": "https://example.com",  # 可选，用于生成预签名URL的公共基础URL
             }
     """
     
@@ -64,6 +65,7 @@ class MinioFileService:
         self.bucket_map = self.config.get("bucket_map", {})
         self.default_bucket = self.config.get("default_bucket", "user")
         self.presigned_expiry = self.config.get("presigned_expiry", 3600)
+        self.public_url = self.config.get("public_url")
         
         # 创建 MinIO 客户端
         self.client = Minio(
@@ -137,6 +139,25 @@ class MinioFileService:
                 return f"{size_bytes:.2f} {unit}"
             size_bytes /= 1024
         return f"{size_bytes:.2f} PB"
+    
+    def _replace_url_host(self, url: str) -> str:
+        """替换URL的host部分为public_url（如果配置了）"""
+        if not self.public_url:
+            return url
+        
+        try:
+            parsed_original = urlparse(url)
+            parsed_public = urlparse(self.public_url)
+            
+            # 构建新URL：使用public_url的scheme和netloc，保留原始URL的path和query
+            new_url = f"{parsed_public.scheme}://{parsed_public.netloc}{parsed_original.path}"
+            if parsed_original.query:
+                new_url += f"?{parsed_original.query}"
+            
+            return new_url
+        except Exception as e:
+            print(f"[MinioFileService] 替换URL host失败: {e}")
+            return url
     
     # ==========================================
     # 上传方法
@@ -305,6 +326,11 @@ class MinioFileService:
                 object_name,
                 expires=timedelta(seconds=expiry)
             )
+            
+            # 如果配置了public_url，则替换URL的host部分
+            if self.public_url:
+                url = self._replace_url_host(url)
+            
             return url
         except Exception as e:
             print(f"[MinioFileService] 生成预签名 URL 失败: {e}")

@@ -58,6 +58,7 @@ config = {
     },
     "default_bucket": "user",
     "presigned_expiry": 3600,
+    "public_url": "https://cdn.example.com",  # 可选，用于生成预签名URL的公共基础URL
 }
 
 # 初始化服务
@@ -218,6 +219,11 @@ config = {
 
     # 预签名 URL 过期时间（可选，默认为 3600 秒）
     "presigned_expiry": 3600,
+
+    # 公共基础 URL（可选，用于生成预签名URL时替换host部分）
+    # 适用于通过nginx等反向代理访问MinIO的场景
+    # 例如：如果MinIO在 http://10.31.31.41:9000，但通过 https://cdn.example.com 访问
+    "public_url": "https://cdn.example.com",
 }
 ```
 
@@ -240,6 +246,31 @@ try:
 except ConnectionError as e:
     print(f"连接失败: {e}")
 ```
+
+### 使用公共URL（反向代理场景）
+
+当你通过nginx等反向代理访问MinIO时，可以使用 `public_url` 配置来生成使用公共域名的预签名URL：
+
+```python
+config = {
+    "minio": {
+        "endpoint": "10.31.31.41:9000",  # MinIO实际地址
+        "access_key": "your_access_key",
+        "secret_key": "your_secret_key",
+        "secure": False,
+    },
+    "public_url": "https://cdn.example.com",  # 通过nginx反向代理的公共域名
+}
+
+store = RefStore(config)
+
+# 生成的预签名URL将使用 https://cdn.example.com 而不是 http://10.31.31.41:9000
+uri = store.upload_file(b"Hello", "test.txt")
+url = store.get_presigned_url(uri)
+# url: https://cdn.example.com/user-upload/.../test.txt?X-Amz-Algorithm=...
+```
+
+**注意**：`public_url` 只影响预签名URL的生成，MinIO客户端的连接仍然使用 `endpoint` 配置。
 
 ## URI 操作
 
