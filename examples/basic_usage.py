@@ -10,18 +10,19 @@ from refstore import RefStore, ConfigValidator, encode_uri, decode_uri
 def main():
     # 配置 RefStore
     config = {
-        "minio": {
-            "endpoint": "localhost:9000",
-            "access_key": "your_access_key",
-            "secret_key": "your_secret_key",
-            "secure": False,
-        },
-        "bucket_map": {
-            "user": "physical-user-bucket",
-            "public": "physical-public-bucket",
-        },
-        "default_bucket": "user",
-        "presigned_expiry": 3600,
+            "minio": {
+                "endpoint": "10.31.31.41:9000",
+                "access_key": "qichen",
+                "secret_key": "qichen1997",
+                "secure": False,
+            },
+            "bucket_map": {
+                "user": "physical-user-bucket",
+                "public": "physical-public-bucket",
+            },
+            "default_bucket": "user",
+            "presigned_expiry": 3600,
+            "public_url": "https://shclzczy.odb.sh.cn/cdip-file-system/",
     }
 
     # 验证配置
@@ -87,31 +88,31 @@ def main():
     presigned_url = store.get_presigned_url(uri, expiry_seconds=3600)
     print(f"下载 URL: {presigned_url}")
 
-    # 下载文件
-    print("\n=== 下载文件 ===")
-    downloaded_data = store.download_file(uri)
-    if downloaded_data:
-        print(f"下载内容: {downloaded_data.decode('utf-8')}")
+    # # 下载文件
+    # print("\n=== 下载文件 ===")
+    # downloaded_data = store.download_file(uri)
+    # if downloaded_data:
+    #     print(f"下载内容: {downloaded_data.decode('utf-8')}")
 
-    # 列出文件
-    print("\n=== 列出文件 ===")
-    files = store.list_files(logic_bucket="user", recursive=True)
-    print(f"找到 {len(files)} 个文件:")
-    for f in files[:5]:  # 只显示前5个
-        print(f"  - {f['object_name']} ({f['size_human']})")
+    # # 列出文件
+    # print("\n=== 列出文件 ===")
+    # files = store.list_files(logic_bucket="user", recursive=True)
+    # print(f"找到 {len(files)} 个文件:")
+    # for f in files[:5]:  # 只显示前5个
+    #     print(f"  - {f['object_name']} ({f['size_human']})")
 
-    # URI 编码/解码示例
-    print("\n=== URI 操作 ===")
-    # 编码 URI
-    encoded_uri = encode_uri("user", "path/to/file.txt")
-    print(f"编码 URI: {encoded_uri}")
+    # # URI 编码/解码示例
+    # print("\n=== URI 操作 ===")
+    # # 编码 URI
+    # encoded_uri = encode_uri("user", "path/to/file.txt")
+    # print(f"编码 URI: {encoded_uri}")
 
-    # 解码 URI
-    bucket, object_name = decode_uri(encoded_uri)
-    print(f"解码 URI - 桶: {bucket}, 对象: {object_name}")
+    # # 解码 URI
+    # bucket, object_name = decode_uri(encoded_uri)
+    # print(f"解码 URI - 桶: {bucket}, 对象: {object_name}")
 
-    # 删除文件
-    print("\n=== 删除文件 ===")
+    # # 删除文件
+    # print("\n=== 删除文件 ===")
     # result = store.delete_file(uri)
     # print(f"文件删除: {'成功' if result else '失败'}")
 

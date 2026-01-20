@@ -141,7 +141,16 @@ class MinioFileService:
         return f"{size_bytes:.2f} PB"
     
     def _replace_url_host(self, url: str) -> str:
-        """替换URL的host部分为public_url（如果配置了）"""
+        """
+        替换URL的host部分为public_url（如果配置了）
+        
+        支持public_url包含路径前缀的情况，例如：
+        - public_url: https://example.com/cdip-file-system/
+        - 原始URL: http://localhost:9000/user-upload/file.png?query
+        - 结果: https://example.com/cdip-file-system/user-upload/file.png?query
+        
+        注意：签名是基于原始host计算的，需要配置nginx传递正确的Host header给MinIO。
+        """
         if not self.public_url:
             return url
         
@@ -149,8 +158,24 @@ class MinioFileService:
             parsed_original = urlparse(url)
             parsed_public = urlparse(self.public_url)
             
-            # 构建新URL：使用public_url的scheme和netloc，保留原始URL的path和query
-            new_url = f"{parsed_public.scheme}://{parsed_public.netloc}{parsed_original.path}"
+            # 获取public_url的路径前缀（去除尾部斜杠）
+            public_path = parsed_public.path.rstrip('/')
+            
+            # 获取原始URL的路径（去除前导斜杠）
+            original_path = parsed_original.path.lstrip('/')
+            
+            # 构建新路径
+            if public_path and original_path:
+                new_path = f"{public_path}/{original_path}"
+            elif public_path:
+                new_path = public_path
+            elif original_path:
+                new_path = f"/{original_path}"
+            else:
+                new_path = "/"
+            
+            # 构建新URL：使用public_url的scheme和netloc，拼接路径和query
+            new_url = f"{parsed_public.scheme}://{parsed_public.netloc}{new_path}"
             if parsed_original.query:
                 new_url += f"?{parsed_original.query}"
             
@@ -314,12 +339,20 @@ class MinioFileService:
         expiry_seconds: int = None,
         method: str = "GET"
     ) -> Optional[str]:
-        """生成预签名 URL"""
+        """
+        生成预签名 URL
+        
+        如果配置了 public_url，会替换URL的host部分为public_url。
+        
+        注意：签名是基于内部endpoint计算的，需要配置nginx传递正确的Host header：
+        proxy_set_header Host localhost:9000;  # 使用MinIO的内部地址
+        """
         try:
             logic_bucket, object_name = self._parse_s3_uri(s3_uri)
             physical_bucket = self.get_physical_bucket(logic_bucket)
             expiry = expiry_seconds or self.presigned_expiry
             
+            # 使用内部客户端生成预签名 URL
             url = self.client.get_presigned_url(
                 method,
                 physical_bucket,
@@ -327,7 +360,7 @@ class MinioFileService:
                 expires=timedelta(seconds=expiry)
             )
             
-            # 如果配置了public_url，则替换URL的host部分
+            # 如果配置了public_url，替换URL的host部分
             if self.public_url:
                 url = self._replace_url_host(url)
             

@@ -18,8 +18,8 @@ class TestMinioFileService:
         return {
             "minio": {
                 "endpoint": "localhost:9000",
-                "access_key": "test_key",
-                "secret_key": "test_secret",
+                "access_key": "qichen",
+                "secret_key": "qichen1997",
                 "secure": False,
             },
             "bucket_map": {
@@ -28,6 +28,7 @@ class TestMinioFileService:
             },
             "default_bucket": "user",
             "presigned_expiry": 3600,
+            "public_url": "https://shclzczy.odb.sh.cn/cdip-file-system",
         }
 
     def test_init(self, config):

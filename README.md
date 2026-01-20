@@ -254,23 +254,68 @@ except ConnectionError as e:
 ```python
 config = {
     "minio": {
-        "endpoint": "10.31.31.41:9000",  # MinIO实际地址
+        "endpoint": "10.31.31.41:9000",  # MinIO实际地址（内网）
         "access_key": "your_access_key",
         "secret_key": "your_secret_key",
         "secure": False,
     },
-    "public_url": "https://cdn.example.com",  # 通过nginx反向代理的公共域名
+    "public_url": "https://shclzczy.odb.sh.cn/cdip-file-system/",  # 通过nginx反向代理的公共域名
 }
 
 store = RefStore(config)
 
-# 生成的预签名URL将使用 https://cdn.example.com 而不是 http://10.31.31.41:9000
+# 生成的预签名URL将使用 public_url 的 host 和路径前缀
 uri = store.upload_file(b"Hello", "test.txt")
 url = store.get_presigned_url(uri)
-# url: https://cdn.example.com/user-upload/.../test.txt?X-Amz-Algorithm=...
+# url: https://shclzczy.odb.sh.cn/cdip-file-system/user-upload/.../test.txt?X-Amz-Algorithm=...
 ```
 
-**注意**：`public_url` 只影响预签名URL的生成，MinIO客户端的连接仍然使用 `endpoint` 配置。
+**重要说明**：
+- `public_url` 只影响预签名URL的显示，MinIO客户端的实际连接仍然使用 `endpoint` 配置
+- 预签名URL的签名是基于内部 `endpoint` 计算的
+- 如果 `public_url` 包含路径前缀（如 `/cdip-file-system/`），会自动添加到生成的URL中
+- **必须正确配置 nginx 的 Host header**，否则签名验证会失败
+
+#### Nginx 配置示例（关键！）
+
+预签名URL的签名是基于 `endpoint`（内部地址）计算的，所以 **nginx 必须设置 Host header 为 MinIO 的内部地址**：
+
+```nginx
+server {
+    listen 443 ssl;
+    server_name shclzczy.odb.sh.cn;
+
+    ssl_certificate /path/to/cert.pem;
+    ssl_certificate_key /path/to/key.pem;
+
+    location /cdip-file-system/ {
+        proxy_pass http://10.31.31.41:9000/;  # 末尾必须有斜杠
+        
+        # 关键配置：Host header 必须设置为 MinIO 的内部地址
+        # 因为预签名URL的签名是基于这个地址计算的
+        proxy_set_header Host 10.31.31.41:9000;
+        
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        
+        # 保持连接设置
+        proxy_connect_timeout 300;
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+        chunked_transfer_encoding off;
+    }
+}
+```
+
+**关键点**：
+- `proxy_set_header Host 10.31.31.41:9000;` - **必须**设置为 MinIO 的内部地址（与 `endpoint` 一致）
+- `proxy_pass` 末尾的 `/` 确保路径前缀被正确移除
+- 访问 `https://shclzczy.odb.sh.cn/cdip-file-system/bucket/object` 会被转发为 `http://10.31.31.41:9000/bucket/object`
+- MinIO 收到的 Host header 是 `10.31.31.41:9000`，与签名计算时使用的地址一致，签名验证通过
+
+**常见错误**：
+- 如果设置 `proxy_set_header Host $host;`，MinIO 收到的是 `shclzczy.odb.sh.cn`，与签名不匹配，会报 `SignatureDoesNotMatch` 错误
 
 ## URI 操作
 
