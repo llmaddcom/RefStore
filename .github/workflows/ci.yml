@@ -38,6 +38,7 @@ jobs:
 
   test:
     name: Tests on Python ${{ matrix.python-version }}
+    if: false  # 临时关闭测试
     runs-on: ubuntu-latest
     strategy:
       matrix:

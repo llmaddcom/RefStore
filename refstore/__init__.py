@@ -10,7 +10,7 @@ RefStore - 简单易用的 MinIO 对象存储服务封装库
 - 重试机制
 """
 
-__version__ = "0.1.0"
+__version__ = "0.2.1"
 __author__ = "RefStore Contributors"
 
 # 核心异常

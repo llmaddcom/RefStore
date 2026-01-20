@@ -33,6 +33,10 @@ class ConfigValidator:
             },
             "default_bucket": {"type": "string", "default": "user"},
             "presigned_expiry": {"type": "integer", "default": 3600},
+            "public_url": {
+                "type": "string",
+                "description": "用于生成预签名URL的公共基础URL（如通过nginx反向代理的HTTPS域名）",
+            },
         },
     }
 
@@ -88,6 +92,23 @@ class ConfigValidator:
         # 验证 presigned_expiry
         if not isinstance(config["presigned_expiry"], int) or config["presigned_expiry"] <= 0:
             raise ConfigError("presigned_expiry 必须是正整数")
+
+        # 验证 public_url（如果提供）
+        if "public_url" in config:
+            public_url = config["public_url"]
+            if not isinstance(public_url, str) or not public_url.strip():
+                raise ConfigError("public_url 不能为空字符串")
+            # 验证 URL 格式
+            try:
+                parsed = urlparse(public_url)
+                if not parsed.scheme:
+                    raise ConfigError("public_url 必须包含协议（http:// 或 https://）")
+                if not parsed.netloc:
+                    raise ConfigError("public_url 格式无效，缺少主机名")
+            except Exception as e:
+                if isinstance(e, ConfigError):
+                    raise
+                raise ConfigError(f"public_url 格式无效: {e}")
 
         return config
 

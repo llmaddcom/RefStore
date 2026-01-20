@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "refstore"
-version = "0.1.0"
+version = "0.2.1"
 description = "Simple and easy-to-use MinIO object storage service library"
 readme = "README.md"
 license = {file = "LICENSE"}
@@ -111,7 +111,7 @@ use_parentheses = true
 ensure_newline_before_comments = true
 
 [tool.mypy]
-python_version = "3.8"
+python_version = "0.2.1"
 warn_return_any = true
 warn_unused_configs = true
 disallow_untyped_defs = false
