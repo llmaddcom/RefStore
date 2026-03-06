@@ -1,5 +1,6 @@
 """配置验证和管理模块"""
 
+import warnings
 from typing import Dict, Any, Optional, List
 from urllib.parse import urlparse
 
@@ -12,7 +13,6 @@ from .exceptions import ConfigError, ConnectionError
 class ConfigValidator:
     """配置验证器"""
 
-    # 配置结构 Schema
     CONFIG_SCHEMA = {
         "type": "object",
         "required": ["minio"],
@@ -27,11 +27,16 @@ class ConfigValidator:
                     "secure": {"type": "boolean", "default": False},
                 },
             },
+            "enable_bucket_mapping": {
+                "type": "boolean",
+                "default": False,
+                "description": "是否开启逻辑桶到物理桶映射（默认关闭，遵循 AWS S3 最佳实践使用 Prefix 隔离）",
+            },
             "bucket_map": {
                 "type": "object",
-                "description": "逻辑桶名到物理桶名的映射",
+                "description": "逻辑桶名到物理桶名的映射（仅在 enable_bucket_mapping=True 时生效）",
             },
-            "default_bucket": {"type": "string", "default": "user"},
+            "default_bucket": {"type": "string", "default": "default"},
             "presigned_expiry": {"type": "integer", "default": 3600},
             "public_url": {
                 "type": "string",
@@ -74,17 +79,38 @@ class ConfigValidator:
         endpoint = minio_config["endpoint"]
         cls._validate_endpoint(endpoint)
 
+        # 向后兼容：如果提供了 bucket_map 但未设置 enable_bucket_mapping，自动开启并发出警告
+        if "bucket_map" in config and config["bucket_map"] and "enable_bucket_mapping" not in config:
+            warnings.warn(
+                "检测到 bucket_map 配置但未设置 enable_bucket_mapping，已自动开启桶映射。"
+                "建议显式设置 enable_bucket_mapping=True。此行为将在未来版本中移除。",
+                DeprecationWarning,
+                stacklevel=3,
+            )
+            config["enable_bucket_mapping"] = True
+
+        if "enable_bucket_mapping" not in config:
+            config["enable_bucket_mapping"] = False
+
+        enable_mapping = config["enable_bucket_mapping"]
+        if not isinstance(enable_mapping, bool):
+            raise ConfigError("enable_bucket_mapping 必须是布尔值")
+
         # 验证 bucket_map
         if "bucket_map" in config:
             if not isinstance(config["bucket_map"], dict):
                 raise ConfigError("bucket_map 必须是一个字典")
+
+        if enable_mapping:
+            if "bucket_map" not in config or not config["bucket_map"]:
+                raise ConfigError("enable_bucket_mapping=True 时，bucket_map 不能为空")
 
         # 设置默认值
         if "secure" not in minio_config:
             minio_config["secure"] = False
 
         if "default_bucket" not in config:
-            config["default_bucket"] = "user"
+            config["default_bucket"] = "default"
 
         if "presigned_expiry" not in config:
             config["presigned_expiry"] = 3600
@@ -207,8 +233,10 @@ class ConfigValidator:
         """
         config = cls.validate_config(config.copy())
 
-        # 确保 minio 配置包含所有必需字段
         if "bucket_map" not in config:
             config["bucket_map"] = {}
+
+        if "enable_bucket_mapping" not in config:
+            config["enable_bucket_mapping"] = False
 
         return config

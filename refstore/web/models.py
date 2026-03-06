@@ -1,6 +1,6 @@
 """Web API 的 Pydantic 模型"""
 
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 from datetime import datetime
 from pydantic import BaseModel, Field
 
@@ -8,8 +8,9 @@ from pydantic import BaseModel, Field
 class ConfigModel(BaseModel):
     """配置模型"""
     minio: Dict[str, Any]
+    enable_bucket_mapping: Optional[bool] = False
     bucket_map: Optional[Dict[str, str]] = None
-    default_bucket: Optional[str] = "user"
+    default_bucket: Optional[str] = "default"
     presigned_expiry: Optional[int] = 3600
 
 
@@ -105,3 +106,76 @@ class HealthResponse(BaseModel):
     status: str
     message: str
     buckets_ok: bool
+
+
+# ==========================================
+# Gateway 管理模型
+# ==========================================
+
+class GatewayStatusResponse(BaseModel):
+    """网关状态响应"""
+    status: str
+    endpoint: str
+    secure: bool
+    enable_bucket_mapping: bool
+    default_bucket: str
+    bucket_count: int
+
+
+class GatewayConfigResponse(BaseModel):
+    """网关配置响应（脱敏）"""
+    endpoint: str
+    secure: bool
+    enable_bucket_mapping: bool
+    bucket_map: Dict[str, str]
+    default_bucket: str
+    presigned_expiry: int
+    public_url: Optional[str] = None
+
+
+class CreateBucketRequest(BaseModel):
+    """创建桶请求"""
+    name: str
+    location: Optional[str] = None
+
+
+class CreateBucketResponse(BaseModel):
+    """创建桶响应"""
+    success: bool
+    name: str
+    message: Optional[str] = None
+
+
+class BucketDetailResponse(BaseModel):
+    """桶详情响应"""
+    name: str
+    exists: bool
+    object_count: Optional[int] = None
+    total_size: Optional[int] = None
+    total_size_human: Optional[str] = None
+
+
+class BucketListResponse(BaseModel):
+    """桶列表响应"""
+    buckets: List[Dict[str, Any]]
+    total: int
+
+
+class DeleteBucketResponse(BaseModel):
+    """删除桶响应"""
+    success: bool
+    name: str
+    message: Optional[str] = None
+
+
+class BucketMappingResponse(BaseModel):
+    """桶映射配置响应"""
+    enable_bucket_mapping: bool
+    bucket_map: Dict[str, str]
+    reverse_bucket_map: Dict[str, str]
+
+
+class UpdateBucketMappingRequest(BaseModel):
+    """更新桶映射请求"""
+    enable_bucket_mapping: Optional[bool] = None
+    bucket_map: Optional[Dict[str, str]] = None
