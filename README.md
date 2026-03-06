@@ -5,14 +5,15 @@
 [![License](https://img.shields.io/pypi/l/refstore)](LICENSE)
 [![codecov](https://codecov.io/gh/yourusername/refstore/branch/main/graph/badge.svg)](https://codecov.io/gh/yourusername/refstore)
 
-简单易用的 MinIO 对象存储服务封装库
+简单易用的 MinIO 对象存储服务封装库，支持集中式文件网关。
 
 ## 特性
 
 - **同步/异步 API** - 提供完整的同步和异步接口
 - **Web API (FastAPI)** - 基于 FastAPI 的 RESTful 接口
+- **集中式文件网关** - 多项目共享网关，通过 GatewayClient SDK 连接
 - **S3 URI 编码/解码** - 统一的文件标识：`s3://bucket/path/to/file`
-- **逻辑桶名映射** - 支持逻辑桶名到物理桶名的映射
+- **可选逻辑桶名映射** - 默认关闭，遵循 AWS S3 最佳实践（使用 Prefix 隔离）
 - **配置验证** - 内置配置格式验证和连接测试
 - **重试机制** - 带指数退避的自动重试
 - **完整的文档和示例** - 包含丰富的使用示例和测试用例
@@ -31,20 +32,33 @@ pip install refstore
 pip install refstore[web]
 ```
 
+### 网关客户端安装（包含异步网关 SDK）
+
+```bash
+pip install refstore[gateway]
+```
+
 ### 开发安装
 
 ```bash
 pip install refstore[dev]
 ```
 
+### 全部安装
+
+```bash
+pip install refstore[all]
+```
+
 ## 快速开始
 
-### 同步 API
+### 基础用法（桶映射关闭，推荐）
+
+默认模式下，逻辑桶映射关闭，桶名直接对应 MinIO 物理桶，使用 Prefix 进行项目/租户隔离。
 
 ```python
 from refstore import RefStore
 
-# 配置 RefStore
 config = {
     "minio": {
         "endpoint": "localhost:9000",
@@ -52,28 +66,20 @@ config = {
         "secret_key": "your_secret_key",
         "secure": False,
     },
-    "bucket_map": {
-        "user": "physical-user-bucket",
-        "public": "physical-public-bucket",
-    },
-    "default_bucket": "user",
-    "presigned_expiry": 3600,
-    "public_url": "https://cdn.example.com",  # 可选，用于生成预签名URL的公共基础URL
+    "default_bucket": "my-project",
 }
 
-# 初始化服务
 store = RefStore(config)
 store.init_buckets()
 
-# 上传文件
+# 上传文件，用 path 进行项目/租户隔离
 uri = store.upload_file(
     file_data=b"Hello, RefStore!",
     original_filename="test.txt",
     content_type="text/plain",
-    logic_bucket="user",
-    path="documents"
+    path="tenant-a/documents"
 )
-print(f"文件已上传: {uri}")  # s3://user/documents/test.txt
+print(f"文件已上传: {uri}")  # s3://my-project/tenant-a/documents/test.txt
 
 # 生成预签名 URL
 url = store.get_presigned_url(uri, expiry_seconds=3600)
@@ -88,8 +94,56 @@ info = store.get_file_info(uri)
 print(f"文件大小: {info['size_human']}")
 
 # 列出文件
-files = store.list_files(logic_bucket="user")
+files = store.list_files(prefix="tenant-a/")
 print(f"找到 {len(files)} 个文件")
+```
+
+### 开启逻辑桶名映射（高级用法）
+
+如果你需要将多个逻辑桶映射到不同的物理桶，可以开启桶映射功能：
+
+```python
+from refstore import RefStore
+
+config = {
+    "minio": {
+        "endpoint": "localhost:9000",
+        "access_key": "your_access_key",
+        "secret_key": "your_secret_key",
+        "secure": False,
+    },
+    "enable_bucket_mapping": True,
+    "bucket_map": {
+        "user": "physical-user-bucket",
+        "public": "physical-public-bucket",
+    },
+    "default_bucket": "user",
+    "presigned_expiry": 3600,
+}
+
+store = RefStore(config)
+store.init_buckets()
+
+# 上传文件 - 默认返回物理桶 URI
+uri = store.upload_file(
+    file_data=b"Hello!",
+    original_filename="test.txt",
+    logic_bucket="user",
+)
+print(f"物理桶 URI: {uri}")  # s3://physical-user-bucket/2026/03/06/xxx.txt
+
+# 上传文件 - 返回逻辑桶 URI
+uri_logical = store.upload_file(
+    file_data=b"Hello!",
+    original_filename="test.txt",
+    logic_bucket="user",
+    use_logical_uri=True,
+)
+print(f"逻辑桶 URI: {uri_logical}")  # s3://user/2026/03/06/xxx.txt
+
+# 下载时两种 URI 都支持
+data = store.download_file(uri)           # 物理桶 URI 可以用
+data = store.download_file(uri_logical)   # 逻辑桶 URI 也可以用
 ```
 
 ### 异步 API
@@ -109,20 +163,17 @@ config = {
 
 async def main():
     async with AsyncRefStore(config) as store:
-        # 上传文件
         uri = await store.upload_file(
             file_data=b"Hello, Async RefStore!",
             original_filename="async_test.txt",
-            logic_bucket="user"
         )
 
-        # 下载文件
         data = await store.download_file(uri)
         print(data.decode('utf-8'))
 
         # 并发上传多个文件
         tasks = [
-            store.upload_file(b"File 1", "file1.txt", "user")
+            store.upload_file(b"File 1", "file1.txt")
             for _ in range(10)
         ]
         uris = await asyncio.gather(*tasks)
@@ -146,10 +197,8 @@ config = {
     },
 }
 
-# 初始化 Web 服务
 init_web_service(config)
 
-# 启动服务器
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(web_app, host="0.0.0.0", port=8000)
@@ -163,34 +212,75 @@ uvicorn refstore.web:web_app --host 0.0.0.0 --port 8000 --reload
 
 访问 API 文档：http://localhost:8000/docs
 
-### Web API 客户端
+### 集中式文件网关（GatewayClient）
+
+多项目共享同一个 RefStore 网关服务，各项目无需配置 MinIO 连接信息，只需知道网关地址。
+
+**启动网关服务**（运维侧）：
 
 ```python
-import requests
+from refstore import web_app, init_web_service
+import uvicorn
 
-# 上传文件
-with open("test.txt", "rb") as f:
-    files = {"file": f}
-    data = {"logic_bucket": "user"}
-    response = requests.post("http://localhost:8000/upload", files=files, data=data)
-    result = response.json()
-    uri = result["uri"]
+config = {
+    "minio": {
+        "endpoint": "10.31.31.41:9000",
+        "access_key": "admin_key",
+        "secret_key": "admin_secret",
+        "secure": False,
+    },
+    "default_bucket": "shared-storage",
+}
 
-# 下载文件
-params = {"uri": uri}
-response = requests.get("http://localhost:8000/download", params=params)
-with open("downloaded.txt", "wb") as f:
-    f.write(response.content)
+init_web_service(config)
+uvicorn.run(web_app, host="0.0.0.0", port=8000)
+```
 
-# 获取文件信息
-params = {"uri": uri}
-response = requests.get("http://localhost:8000/info", params=params)
-info = response.json()
+**通过 SDK 连接网关**（各项目侧）：
 
-# 生成预签名 URL
-params = {"uri": uri, "expiry_seconds": 3600}
-response = requests.get("http://localhost:8000/presigned-url", params=params)
-presigned_url = response.json()["url"]
+```python
+from refstore.gateway import GatewayClient
+
+# 只需网关地址，无需 MinIO 连接信息
+client = GatewayClient(gateway_url="http://gateway-host:8000")
+
+# 查看网关状态
+status = client.get_status()
+print(f"连接状态: {status['status']}, 桶数量: {status['bucket_count']}")
+
+# 查看配置（脱敏）
+config = client.get_config()
+
+# 桶管理
+client.create_bucket("my-project-bucket")
+buckets = client.list_buckets()
+info = client.get_bucket_info("my-project-bucket")
+client.delete_bucket("old-bucket", force=True)
+
+# 文件操作
+uri_result = client.upload_file(b"Hello Gateway!", filename="test.txt", logic_bucket="default")
+uri = uri_result["uri"]
+
+data = client.download_file(uri)
+url_result = client.get_presigned_url(uri)
+
+files = client.list_files()
+client.delete_file(uri)
+```
+
+**异步网关客户端**：
+
+```python
+import asyncio
+from refstore.gateway import AsyncGatewayClient
+
+async def main():
+    async with AsyncGatewayClient(gateway_url="http://gateway-host:8000") as client:
+        status = await client.get_status()
+        result = await client.upload_file(b"Hello!", filename="test.txt")
+        data = await client.download_file(result["uri"])
+
+asyncio.run(main())
 ```
 
 ## 配置
@@ -201,28 +291,30 @@ presigned_url = response.json()["url"]
 config = {
     # MinIO 连接配置（必需）
     "minio": {
-        "endpoint": "localhost:9000",      # MinIO 服务器地址
-        "access_key": "your_access_key",    # 访问密钥
-        "secret_key": "your_secret_key",    # 秘密密钥
-        "secure": False,                    # 是否使用 HTTPS
+        "endpoint": "localhost:9000",
+        "access_key": "your_access_key",
+        "secret_key": "your_secret_key",
+        "secure": False,
     },
 
-    # 逻辑桶名到物理桶名的映射（可选）
+    # 逻辑桶映射开关（可选，默认 False）
+    # 遵循 AWS S3 最佳实践：默认关闭，用 Prefix 隔离
+    "enable_bucket_mapping": False,
+
+    # 逻辑桶名到物理桶名的映射（仅在 enable_bucket_mapping=True 时生效）
     "bucket_map": {
         "user": "physical-user-bucket",
         "public": "physical-public-bucket",
         "temp": "physical-temp-bucket",
     },
 
-    # 默认逻辑桶名（可选，默认为 "user"）
-    "default_bucket": "user",
+    # 默认桶名（可选，默认为 "default"）
+    "default_bucket": "default",
 
     # 预签名 URL 过期时间（可选，默认为 3600 秒）
     "presigned_expiry": 3600,
 
     # 公共基础 URL（可选，用于生成预签名URL时替换host部分）
-    # 适用于通过nginx等反向代理访问MinIO的场景
-    # 例如：如果MinIO在 http://10.31.31.41:9000，但通过 https://cdn.example.com 访问
     "public_url": "https://cdn.example.com",
 }
 ```
@@ -232,14 +324,12 @@ config = {
 ```python
 from refstore import ConfigValidator
 
-# 验证配置
 try:
     config = ConfigValidator.normalize_config(your_config)
     print("配置有效")
 except ConfigError as e:
     print(f"配置无效: {e}")
 
-# 测试连接
 try:
     ConfigValidator.test_connection(config)
     print("连接成功")
@@ -254,20 +344,19 @@ except ConnectionError as e:
 ```python
 config = {
     "minio": {
-        "endpoint": "10.31.31.41:9000",  # MinIO实际地址（内网）
+        "endpoint": "10.31.31.41:9000",
         "access_key": "your_access_key",
         "secret_key": "your_secret_key",
         "secure": False,
     },
-    "public_url": "https://shclzczy.odb.sh.cn/cdip-file-system/",  # 通过nginx反向代理的公共域名
+    "public_url": "https://shclzczy.odb.sh.cn/cdip-file-system/",
 }
 
 store = RefStore(config)
 
-# 生成的预签名URL将使用 public_url 的 host 和路径前缀
 uri = store.upload_file(b"Hello", "test.txt")
 url = store.get_presigned_url(uri)
-# url: https://shclzczy.odb.sh.cn/cdip-file-system/user-upload/.../test.txt?X-Amz-Algorithm=...
+# url: https://shclzczy.odb.sh.cn/cdip-file-system/default/.../test.txt?X-Amz-Algorithm=...
 ```
 
 **重要说明**：
@@ -278,8 +367,6 @@ url = store.get_presigned_url(uri)
 
 #### Nginx 配置示例（关键！）
 
-预签名URL的签名是基于 `endpoint`（内部地址）计算的，所以 **nginx 必须设置 Host header 为 MinIO 的内部地址**：
-
 ```nginx
 server {
     listen 443 ssl;
@@ -289,17 +376,15 @@ server {
     ssl_certificate_key /path/to/key.pem;
 
     location /cdip-file-system/ {
-        proxy_pass http://10.31.31.41:9000/;  # 末尾必须有斜杠
+        proxy_pass http://10.31.31.41:9000/;
         
-        # 关键配置：Host header 必须设置为 MinIO 的内部地址
-        # 因为预签名URL的签名是基于这个地址计算的
+        # 关键：Host header 必须设置为 MinIO 的内部地址
         proxy_set_header Host 10.31.31.41:9000;
         
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
         
-        # 保持连接设置
         proxy_connect_timeout 300;
         proxy_http_version 1.1;
         proxy_set_header Connection "";
@@ -308,29 +393,20 @@ server {
 }
 ```
 
-**关键点**：
-- `proxy_set_header Host 10.31.31.41:9000;` - **必须**设置为 MinIO 的内部地址（与 `endpoint` 一致）
-- `proxy_pass` 末尾的 `/` 确保路径前缀被正确移除
-- 访问 `https://shclzczy.odb.sh.cn/cdip-file-system/bucket/object` 会被转发为 `http://10.31.31.41:9000/bucket/object`
-- MinIO 收到的 Host header 是 `10.31.31.41:9000`，与签名计算时使用的地址一致，签名验证通过
-
-**常见错误**：
-- 如果设置 `proxy_set_header Host $host;`，MinIO 收到的是 `shclzczy.odb.sh.cn`，与签名不匹配，会报 `SignatureDoesNotMatch` 错误
-
 ## URI 操作
 
-RefStore 使用标准化的 S3 URI 格式：`s3://logic_bucket/path/to/file`
+RefStore 使用标准化的 S3 URI 格式：`s3://bucket/path/to/file`
 
 ```python
 from refstore import encode_uri, decode_uri, validate_uri, get_bucket_from_uri
 
 # 编码 URI
-uri = encode_uri("user", "documents/report.pdf")
-# s3://user/documents/report.pdf
+uri = encode_uri("my-bucket", "documents/report.pdf")
+# s3://my-bucket/documents/report.pdf
 
 # 解码 URI
 bucket, object_name = decode_uri(uri)
-# bucket: user, object_name: documents/report.pdf
+# bucket: my-bucket, object_name: documents/report.pdf
 
 # 验证 URI
 is_valid = validate_uri(uri)
@@ -338,7 +414,7 @@ is_valid = validate_uri(uri)
 
 # 提取桶名
 bucket = get_bucket_from_uri(uri)
-# user
+# my-bucket
 
 # 提取对象名称
 object_name = get_object_name_from_uri(uri)
@@ -366,38 +442,104 @@ def upload_with_retry(store, data, filename):
 ```python
 from refstore import BucketManager
 
-# 创建桶管理器
 bucket_manager = BucketManager(minio_client)
 
-# 创建桶
 bucket_manager.create_bucket("my-bucket")
-
-# 检查桶是否存在
 exists = bucket_manager.bucket_exists("my-bucket")
-
-# 列出所有桶
 buckets = bucket_manager.list_buckets()
-
-# 获取桶信息
 info = bucket_manager.get_bucket_info("my-bucket")
-
-# 删除桶
 bucket_manager.delete_bucket("my-bucket", force=True)
 ```
 
 ### 批量操作
 
 ```python
-# 批量删除文件
 uris = [
-    "s3://user/file1.txt",
-    "s3://user/file2.txt",
-    "s3://user/file3.txt",
+    "s3://default/file1.txt",
+    "s3://default/file2.txt",
+    "s3://default/file3.txt",
 ]
 result = store.delete_files(uris)
 print(f"删除成功: {len(result['deleted'])}")
 print(f"删除失败: {len(result['failed'])}")
 ```
+
+### 网关桶映射热更新
+
+通过网关 API 或 SDK 可以在运行时更新桶映射配置：
+
+```python
+from refstore.gateway import GatewayClient
+
+client = GatewayClient(gateway_url="http://gateway-host:8000")
+
+# 查看当前映射
+mapping = client.get_bucket_mapping()
+print(f"映射开启: {mapping['enable_bucket_mapping']}")
+print(f"映射表: {mapping['bucket_map']}")
+
+# 热更新映射
+client.update_bucket_mapping(
+    enable_bucket_mapping=True,
+    bucket_map={
+        "user": "prod-user-bucket",
+        "logs": "prod-logs-bucket",
+    }
+)
+```
+
+## API 文档
+
+### 同步 API
+
+- `RefStore` - 同步文件服务类
+  - `upload_file(file_data, original_filename, content_type, logic_bucket, path, use_logical_uri)` - 上传文件
+  - `upload_from_local(local_path, logic_bucket, path, content_type, use_logical_uri)` - 从本地路径上传
+  - `upload_from_url(url, logic_bucket, path, timeout, use_logical_uri)` - 从 URL 上传
+  - `download_file(s3_uri)` - 下载文件到内存
+  - `download_to_local(s3_uri, local_path)` - 下载文件到本地
+  - `get_presigned_url(s3_uri, expiry_seconds, method)` - 生成预签名 URL
+  - `get_file_info(s3_uri)` - 获取文件信息
+  - `file_exists(s3_uri)` - 检查文件是否存在
+  - `delete_file(s3_uri)` - 删除文件
+  - `delete_files(s3_uris)` - 批量删除文件
+  - `list_files(logic_bucket, prefix, recursive, use_logical_uri)` - 列出文件
+  - `get_physical_bucket(logic_bucket)` - 逻辑桶名 -> 物理桶名
+  - `get_logical_bucket(physical_bucket)` - 物理桶名 -> 逻辑桶名
+
+### 异步 API
+
+- `AsyncRefStore` - 异步文件服务类（方法签名与同步 API 相同）
+
+### Web API 端点
+
+**文件操作：**
+
+- `POST /upload` - 上传文件
+- `GET /download` - 下载文件
+- `GET /presigned-url` - 生成预签名 URL
+- `GET /info` - 获取文件信息
+- `DELETE /delete` - 删除文件
+- `GET /list` - 列出文件
+- `GET /health` - 健康检查
+
+**网关管理：**
+
+- `GET /gateway/status` - MinIO 连接状态和服务信息
+- `GET /gateway/config` - 查看当前配置（脱敏）
+- `GET /gateway/buckets` - 列出所有桶
+- `POST /gateway/buckets` - 创建桶
+- `GET /gateway/buckets/{name}` - 获取桶详情
+- `DELETE /gateway/buckets/{name}` - 删除桶
+- `GET /gateway/bucket-mapping` - 查看桶映射配置
+- `PUT /gateway/bucket-mapping` - 热更新桶映射配置
+
+### Gateway SDK
+
+- `GatewayClient` - 同步网关客户端
+  - 管理：`get_status()`, `get_config()`, `list_buckets()`, `create_bucket()`, `get_bucket_info()`, `delete_bucket()`, `get_bucket_mapping()`, `update_bucket_mapping()`
+  - 文件：`upload_file()`, `upload_from_local()`, `download_file()`, `download_to_local()`, `get_presigned_url()`, `get_file_info()`, `delete_file()`, `delete_files()`, `list_files()`
+- `AsyncGatewayClient` - 异步网关客户端（方法签名同上，均为 async）
 
 ## 示例
 
@@ -412,82 +554,33 @@ print(f"删除失败: {len(result['failed'])}")
 运行示例：
 
 ```bash
-# 基础示例
 python examples/basic_usage.py
-
-# 异步示例
 python examples/async_usage.py
-
-# Web 服务
 python examples/web_service.py
-
-# 配置验证
 python examples/config_validation.py
 ```
-
-## API 文档
-
-### 同步 API
-
-- `RefStore` - 同步文件服务类
-  - `upload_file()` - 上传文件
-  - `upload_from_local()` - 从本地路径上传
-  - `upload_from_url()` - 从 URL 上传
-  - `download_file()` - 下载文件到内存
-  - `download_to_local()` - 下载文件到本地
-  - `get_presigned_url()` - 生成预签名 URL
-  - `get_file_info()` - 获取文件信息
-  - `file_exists()` - 检查文件是否存在
-  - `delete_file()` - 删除文件
-  - `delete_files()` - 批量删除文件
-  - `list_files()` - 列出文件
-
-### 异步 API
-
-- `AsyncRefStore` - 异步文件服务类（方法签名与同步 API 相同）
-
-### Web API 端点
-
-- `POST /upload` - 上传文件
-- `GET /download` - 下载文件
-- `GET /presigned-url` - 生成预签名 URL
-- `GET /info` - 获取文件信息
-- `DELETE /delete` - 删除文件
-- `GET /list` - 列出文件
-- `GET /health` - 健康检查
 
 ## 开发
 
 ### 运行测试
 
 ```bash
-# 安装开发依赖
 pip install -e ".[dev]"
-
-# 运行测试
 pytest
-
-# 运行测试并生成覆盖率报告
 pytest --cov=refstore --cov-report=html
 ```
 
 ### 代码格式化
 
 ```bash
-# 使用 Black 格式化代码
 black refstore tests examples
-
-# 使用 isort 排序导入
 isort refstore tests examples
 ```
 
 ### 代码检查
 
 ```bash
-# 使用 flake8 检查代码
 flake8 refstore tests examples
-
-# 使用 mypy 进行类型检查
 mypy refstore
 ```
 

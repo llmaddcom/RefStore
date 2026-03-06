@@ -1,6 +1,6 @@
 """Web API 模块"""
 
-from .app import app, init_service
+from .app import app, init_service, gateway_router
 from .models import (
     ConfigModel,
     UploadRequest,
@@ -16,11 +16,21 @@ from .models import (
     FileListItem,
     ListResponse,
     HealthResponse,
+    GatewayStatusResponse,
+    GatewayConfigResponse,
+    CreateBucketRequest,
+    CreateBucketResponse,
+    BucketDetailResponse,
+    BucketListResponse,
+    DeleteBucketResponse,
+    BucketMappingResponse,
+    UpdateBucketMappingRequest,
 )
 
 __all__ = [
     "app",
     "init_service",
+    "gateway_router",
     "ConfigModel",
     "UploadRequest",
     "UploadResponse",
@@ -35,4 +45,13 @@ __all__ = [
     "FileListItem",
     "ListResponse",
     "HealthResponse",
+    "GatewayStatusResponse",
+    "GatewayConfigResponse",
+    "CreateBucketRequest",
+    "CreateBucketResponse",
+    "BucketDetailResponse",
+    "BucketListResponse",
+    "DeleteBucketResponse",
+    "BucketMappingResponse",
+    "UpdateBucketMappingRequest",
 ]

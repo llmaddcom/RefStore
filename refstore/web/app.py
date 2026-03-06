@@ -3,7 +3,7 @@ Web API 模块 - 基于 FastAPI 的 RESTful 接口
 """
 
 from typing import Optional
-from fastapi import FastAPI, UploadFile, File, HTTPException, Form, status
+from fastapi import FastAPI, APIRouter, UploadFile, File, HTTPException, Form, status
 from fastapi.responses import StreamingResponse, JSONResponse
 from contextlib import asynccontextmanager
 import io
@@ -23,6 +23,15 @@ from .models import (
     ListRequest,
     ListResponse,
     HealthResponse,
+    GatewayStatusResponse,
+    GatewayConfigResponse,
+    CreateBucketRequest,
+    CreateBucketResponse,
+    BucketDetailResponse,
+    BucketListResponse,
+    DeleteBucketResponse,
+    BucketMappingResponse,
+    UpdateBucketMappingRequest,
 )
 
 
@@ -106,7 +115,8 @@ async def health_check():
 async def upload_file(
     file: UploadFile = File(...),
     logic_bucket: Optional[str] = Form(None),
-    path: Optional[str] = Form(None)
+    path: Optional[str] = Form(None),
+    use_logical_uri: bool = Form(False),
 ):
     """
     上传文件
@@ -114,20 +124,20 @@ async def upload_file(
     - **file**: 要上传的文件
     - **logic_bucket**: 逻辑桶名（可选）
     - **path**: 存储路径（可选）
+    - **use_logical_uri**: 为 True 时返回逻辑桶 URI（仅在 enable_bucket_mapping 开启时有效）
     """
     try:
         service = get_refstore()
 
-        # 读取文件内容
         content = await file.read()
 
-        # 上传文件
         uri = service.upload_file(
             file_data=content,
             original_filename=file.filename or "file",
             content_type=file.content_type or "application/octet-stream",
             logic_bucket=logic_bucket,
-            path=path
+            path=path,
+            use_logical_uri=use_logical_uri,
         )
 
         if uri is None:
@@ -296,7 +306,8 @@ async def delete_files(request: DeleteRequest):
 async def list_files(
     logic_bucket: Optional[str] = None,
     prefix: str = "",
-    recursive: bool = True
+    recursive: bool = True,
+    use_logical_uri: bool = False,
 ):
     """
     列出桶中的文件
@@ -304,6 +315,7 @@ async def list_files(
     - **logic_bucket**: 逻辑桶名
     - **prefix**: 文件前缀
     - **recursive**: 是否递归列出
+    - **use_logical_uri**: 为 True 时返回逻辑桶 URI
     """
     try:
         service = get_refstore()
@@ -311,7 +323,7 @@ async def list_files(
         if logic_bucket is None:
             logic_bucket = service.default_bucket
 
-        files = service.list_files(logic_bucket, prefix, recursive)
+        files = service.list_files(logic_bucket, prefix, recursive, use_logical_uri)
 
         return ListResponse(
             logic_bucket=logic_bucket,
@@ -334,8 +346,198 @@ async def root():
     """根路径 - API 信息"""
     return {
         "name": "RefStore API",
-        "version": "0.1.0",
+        "version": "0.3.0",
         "description": "MinIO object storage service RESTful API",
         "docs": "/docs",
-        "health": "/health"
+        "health": "/health",
+        "gateway": "/gateway/status",
     }
+
+
+# ==========================================
+# Gateway 管理路由
+# ==========================================
+
+gateway_router = APIRouter(prefix="/gateway", tags=["Gateway 管理"])
+
+
+@gateway_router.get("/status", response_model=GatewayStatusResponse)
+async def gateway_status():
+    """获取 MinIO 网关连接状态和服务信息"""
+    try:
+        service = get_refstore()
+        buckets = service.bucket_manager.list_buckets()
+        return GatewayStatusResponse(
+            status="connected",
+            endpoint=service.endpoint,
+            secure=service.secure,
+            enable_bucket_mapping=service.enable_bucket_mapping,
+            default_bucket=service.default_bucket,
+            bucket_count=len(buckets),
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"获取网关状态失败: {str(e)}",
+        )
+
+
+@gateway_router.get("/config", response_model=GatewayConfigResponse)
+async def gateway_config():
+    """查看当前 MinIO 服务配置（access_key/secret_key 脱敏）"""
+    try:
+        service = get_refstore()
+        return GatewayConfigResponse(
+            endpoint=service.endpoint,
+            secure=service.secure,
+            enable_bucket_mapping=service.enable_bucket_mapping,
+            bucket_map=service.bucket_map,
+            default_bucket=service.default_bucket,
+            presigned_expiry=service.presigned_expiry,
+            public_url=service.public_url,
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"获取配置失败: {str(e)}",
+        )
+
+
+@gateway_router.get("/buckets", response_model=BucketListResponse)
+async def gateway_list_buckets():
+    """列出 MinIO 服务上的所有桶"""
+    try:
+        service = get_refstore()
+        buckets = service.bucket_manager.list_buckets()
+        return BucketListResponse(buckets=buckets, total=len(buckets))
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"列出桶失败: {str(e)}",
+        )
+
+
+@gateway_router.post("/buckets", response_model=CreateBucketResponse)
+async def gateway_create_bucket(request: CreateBucketRequest):
+    """创建一个新桶"""
+    try:
+        service = get_refstore()
+        success = service.bucket_manager.create_bucket(request.name, request.location)
+        msg = "桶创建成功" if success else "桶创建失败"
+        return CreateBucketResponse(success=success, name=request.name, message=msg)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"创建桶失败: {str(e)}",
+        )
+
+
+@gateway_router.get("/buckets/{name}", response_model=BucketDetailResponse)
+async def gateway_get_bucket(name: str):
+    """获取指定桶的详细信息"""
+    try:
+        service = get_refstore()
+        info = service.bucket_manager.get_bucket_info(name)
+        if info is None:
+            return BucketDetailResponse(name=name, exists=False)
+        return BucketDetailResponse(
+            name=info["name"],
+            exists=info["exists"],
+            object_count=info.get("object_count"),
+            total_size=info.get("total_size"),
+            total_size_human=info.get("total_size_human"),
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"获取桶信息失败: {str(e)}",
+        )
+
+
+@gateway_router.delete("/buckets/{name}", response_model=DeleteBucketResponse)
+async def gateway_delete_bucket(name: str, force: bool = False):
+    """
+    删除指定桶
+
+    - **force**: 为 True 时强制删除（先清空桶内所有对象）
+    """
+    try:
+        service = get_refstore()
+        success = service.bucket_manager.delete_bucket(name, force=force)
+        msg = "桶删除成功" if success else "桶删除失败"
+        return DeleteBucketResponse(success=success, name=name, message=msg)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"删除桶失败: {str(e)}",
+        )
+
+
+@gateway_router.get("/bucket-mapping", response_model=BucketMappingResponse)
+async def gateway_get_bucket_mapping():
+    """查看当前桶映射配置"""
+    try:
+        service = get_refstore()
+        return BucketMappingResponse(
+            enable_bucket_mapping=service.enable_bucket_mapping,
+            bucket_map=service.bucket_map,
+            reverse_bucket_map=service.reverse_bucket_map,
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"获取桶映射配置失败: {str(e)}",
+        )
+
+
+@gateway_router.put("/bucket-mapping", response_model=BucketMappingResponse)
+async def gateway_update_bucket_mapping(request: UpdateBucketMappingRequest):
+    """
+    热更新桶映射配置
+
+    可以单独更新 enable_bucket_mapping 或 bucket_map，也可以同时更新。
+    """
+    try:
+        service = get_refstore()
+
+        if request.enable_bucket_mapping is not None:
+            service.enable_bucket_mapping = request.enable_bucket_mapping
+
+        if request.bucket_map is not None:
+            service.bucket_map = request.bucket_map
+
+        # 重建反向映射表
+        if service.enable_bucket_mapping and service.bucket_map:
+            service.reverse_bucket_map = {v: k for k, v in service.bucket_map.items()}
+        else:
+            service.reverse_bucket_map = {}
+
+        return BucketMappingResponse(
+            enable_bucket_mapping=service.enable_bucket_mapping,
+            bucket_map=service.bucket_map,
+            reverse_bucket_map=service.reverse_bucket_map,
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"更新桶映射配置失败: {str(e)}",
+        )
+
+
+app.include_router(gateway_router)

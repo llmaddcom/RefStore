@@ -5,12 +5,13 @@ RefStore - 简单易用的 MinIO 对象存储服务封装库
 - 同步/异步 API
 - Web API (FastAPI)
 - S3 URI 编码/解码
-- 逻辑桶名到物理桶名的映射
+- 可选的逻辑桶名到物理桶名映射（默认关闭）
+- 集中式文件网关 SDK（GatewayClient）
 - 配置验证和连接测试
 - 重试机制
 """
 
-__version__ = "0.2.1"
+__version__ = "0.3.0"
 __author__ = "RefStore Contributors"
 
 # 核心异常
@@ -52,6 +53,9 @@ from ._async.buckets import AsyncBucketManager
 from .web import app as web_app
 from .web import init_service as init_web_service
 
+# Gateway SDK
+from .gateway import GatewayClient, AsyncGatewayClient
+
 
 __all__ = [
     # 异常类
@@ -86,13 +90,15 @@ __all__ = [
     # Web API
     "web_app",
     "init_web_service",
+    # Gateway SDK
+    "GatewayClient",
+    "AsyncGatewayClient",
 ]
 
 
 def __getattr__(name):
-    """懒加载 Web API 相关模块"""
+    """懒加载 Web API 和 Gateway 相关模块"""
     if name in ["web_app", "init_web_service"]:
-        # 确保依赖已安装
         try:
             import fastapi
             import pydantic
@@ -101,5 +107,12 @@ def __getattr__(name):
                 f"To use Web API features, please install: pip install refstore[web]"
             ) from e
 
-    # 模块已存在，正常返回
+    if name == "AsyncGatewayClient":
+        try:
+            import aiohttp
+        except ImportError as e:
+            raise ImportError(
+                f"To use AsyncGatewayClient, please install: pip install refstore[gateway]"
+            ) from e
+
     return globals().get(name)

@@ -26,21 +26,12 @@ class AsyncMinioFileService:
     """
 
     def __init__(self, config: Dict[str, Any], executor: ThreadPoolExecutor = None):
-        """
-        初始化异步文件服务
-
-        Args:
-            config: 配置字典
-            executor: 线程池执行器，如果为 None 则创建默认执行器
-        """
         self.config = ConfigValidator.normalize_config(config)
         self.executor = executor
         self._owned_executor = executor is None
 
-        # 创建同步文件服务实例
         self._sync_service = SyncMinioFileService(self.config)
 
-        # 线程池（如果没有提供）
         if self._owned_executor:
             self.executor = ThreadPoolExecutor(max_workers=10)
 
@@ -60,7 +51,6 @@ class AsyncMinioFileService:
         loop = asyncio.get_event_loop()
         return loop.run_in_executor(self.executor, lambda: func(*args, **kwargs))
 
-    # 属性访问
     @property
     def endpoint(self) -> str:
         return self._sync_service.endpoint
@@ -70,8 +60,16 @@ class AsyncMinioFileService:
         return self._sync_service.secure
 
     @property
+    def enable_bucket_mapping(self) -> bool:
+        return self._sync_service.enable_bucket_mapping
+
+    @property
     def bucket_map(self) -> Dict[str, str]:
         return self._sync_service.bucket_map
+
+    @property
+    def reverse_bucket_map(self) -> Dict[str, str]:
+        return self._sync_service.reverse_bucket_map
 
     @property
     def default_bucket(self) -> str:
@@ -81,7 +79,6 @@ class AsyncMinioFileService:
     def presigned_expiry(self) -> int:
         return self._sync_service.presigned_expiry
 
-    # 桶初始化
     async def init_buckets(self) -> None:
         """初始化所有配置的物理桶"""
         await self._run_in_executor(self._sync_service.init_buckets)
@@ -89,6 +86,10 @@ class AsyncMinioFileService:
     def get_physical_bucket(self, logic_bucket: str) -> str:
         """逻辑桶名 -> 物理桶名（同步方法）"""
         return self._sync_service.get_physical_bucket(logic_bucket)
+
+    def get_logical_bucket(self, physical_bucket: str) -> str:
+        """物理桶名 -> 逻辑桶名（同步方法）"""
+        return self._sync_service.get_logical_bucket(physical_bucket)
 
     # ==========================================
     # 上传方法
@@ -100,7 +101,8 @@ class AsyncMinioFileService:
         original_filename: str = "file",
         content_type: str = "application/octet-stream",
         logic_bucket: Optional[str] = None,
-        path: Optional[str] = None
+        path: Optional[str] = None,
+        use_logical_uri: bool = False,
     ) -> Optional[str]:
         """
         上传文件
@@ -108,13 +110,14 @@ class AsyncMinioFileService:
         :param file_data: 文件数据（bytes 或 BinaryIO）
         :param original_filename: 原始文件名
         :param content_type: 内容类型
-        :param logic_bucket: 逻辑桶名（会映射到物理桶）
+        :param logic_bucket: 逻辑桶名
         :param path: 指定的相对路径（可选）
-        :return: S3 URI (如 s3://user/path/file.ext) 或 None
+        :param use_logical_uri: 为 True 时返回逻辑桶 URI（仅在 enable_bucket_mapping=True 时有效）
+        :return: S3 URI 或 None
         """
         return await self._run_in_executor(
             self._sync_service.upload_file,
-            file_data, original_filename, content_type, logic_bucket, path
+            file_data, original_filename, content_type, logic_bucket, path, use_logical_uri
         )
 
     async def upload_from_local(
@@ -122,12 +125,13 @@ class AsyncMinioFileService:
         local_path: str,
         logic_bucket: Optional[str] = None,
         path: Optional[str] = None,
-        content_type: Optional[str] = None
+        content_type: Optional[str] = None,
+        use_logical_uri: bool = False,
     ) -> Optional[str]:
         """从本地路径上传文件"""
         return await self._run_in_executor(
             self._sync_service.upload_from_local,
-            local_path, logic_bucket, path, content_type
+            local_path, logic_bucket, path, content_type, use_logical_uri
         )
 
     async def upload_from_url(
@@ -135,12 +139,13 @@ class AsyncMinioFileService:
         url: str,
         logic_bucket: Optional[str] = None,
         path: Optional[str] = None,
-        timeout: int = 30
+        timeout: int = 30,
+        use_logical_uri: bool = False,
     ) -> Optional[str]:
         """从 URL 下载并上传文件"""
         return await self._run_in_executor(
             self._sync_service.upload_from_url,
-            url, logic_bucket, path, timeout
+            url, logic_bucket, path, timeout, use_logical_uri
         )
 
     # ==========================================
@@ -228,10 +233,11 @@ class AsyncMinioFileService:
         self,
         logic_bucket: Optional[str] = None,
         prefix: str = "",
-        recursive: bool = True
+        recursive: bool = True,
+        use_logical_uri: bool = False,
     ) -> List[Dict[str, Any]]:
         """列出桶中的文件"""
         return await self._run_in_executor(
             self._sync_service.list_files,
-            logic_bucket, prefix, recursive
+            logic_bucket, prefix, recursive, use_logical_uri
         )
